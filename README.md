@@ -7,10 +7,6 @@ microrregiões**, com atualizações quantizadas:
 ```
 estação (ESP32) --LoRa--> agregador da microrregião (gateway) --backhaul--> servidor estadual
 ```
-
-> ⚠️ Os dados padrão são **sintéticos** e servem para testar o código. Os resultados
-> do artigo devem vir dos dados reais do INMET (seção 4).
-
 ## 1. Instalação
 
 ```bash
