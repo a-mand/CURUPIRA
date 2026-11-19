@@ -1,6 +1,7 @@
 """Dados: gerador sintético com evento extremo (para testar o pipeline) e leitor de CSV do INMET.
 
-Cada estação vira um "nó". Os dados são séries horárias com 3 variáveis:
+Cada estação vira um "nó", e os nós são agrupados por microrregião.
+Os dados são séries horárias com 3 variáveis:
 temperatura (°C), umidade relativa (%) e pressão (hPa).
 """
 import numpy as np
@@ -10,57 +11,80 @@ FEATURES = ["temp", "umid", "pressao"]
 
 
 # ---------------------------------------------------------------------------
-# 1) Gerador sintético (substituir por dados reais do INMET quando disponíveis)
+# 1) Gerador sintético por microrregiões (substituir por dados reais do INMET)
 # ---------------------------------------------------------------------------
-def gerar_estacoes(n_estacoes=8, dias=420, inicio_teste=300, seed=0,
-                   epicentro=(0, 1, 2), vizinhas=(3, 4), dia_evento=40, atraso_vizinhas=10,
-                   duracao=45):
-    """Gera séries horárias de clima com uma 'seca extrema' que atinge
-    primeiro as estações do epicentro e, depois, as vizinhas.
+# Microrregiões geográficas do Pará (IBGE, 1990) usadas como exemplo ilustrativo.
+# O papel de cada uma no evento (epicentro / vizinha / fora) é HIPOTÉTICO e só serve
+# para testar o código; com dados reais, os papéis saem da rotulagem dos eventos.
+MICRORREGIOES = {
+    "Santarém": "epicentro",
+    "Óbidos": "epicentro",
+    "Itaituba": "vizinha",
+    "Altamira": "vizinha",
+    "Marabá": "fora",
+    "Belém": "fora",
+}
 
-    O evento é um concept drift real: além de subir a média de temperatura e
-    baixar a umidade, ele muda a DINÂMICA (amplitude diurna maior e maior
-    persistência do calor), de modo que a relação entrada -> saída aprendida
-    em regime normal deixa de valer.
-    Retorna: dict {id_estacao: DataFrame}, dict {id_estacao: (h_inicio, h_fim) do evento ou None}
+
+def gerar_microrregioes(estacoes_por_mr=4, dias=420, inicio_teste=300, seed=0,
+                        microrregioes=MICRORREGIOES, dia_evento=40, atraso_vizinhas=10, duracao=45):
+    """Gera séries horárias de clima para várias estações agrupadas em microrregiões.
+
+    Estações da mesma microrregião compartilham o clima regional (com variação local).
+    Uma 'seca extrema' atinge primeiro as microrregiões do epicentro e, dias depois,
+    as vizinhas, com menor intensidade. O evento é um concept drift real: além de subir a
+    temperatura e baixar a umidade, ele muda a DINÂMICA (amplitude diurna maior e maior
+    persistência do calor).
+
+    Retorna:
+      estacoes  {id: DataFrame}
+      eventos   {id: (h_inicio, h_fim) ou None}
+      mr_de     {id: nome da microrregião}
+      papel     {nome da microrregião: 'epicentro' | 'vizinha' | 'fora'}
     """
     rng = np.random.default_rng(seed)
     H = dias * 24
     t = np.arange(H)
     hora = t % 24
     dia = t // 24
-    estacoes, eventos = {}, {}
-    for s in range(n_estacoes):
-        base_t = 27 + rng.normal(0, 0.8)           # clima base da estação
-        amp = 4 + rng.normal(0, 0.4)               # amplitude diurna
-        sazonal = 1.2 * np.sin(2 * np.pi * dia / 365 + rng.uniform(0, 1))
-        diurno = np.sin(2 * np.pi * (hora - 9) / 24)
+    estacoes, eventos, mr_de = {}, {}, {}
+    sid = 0
+    for nome, papel in microrregioes.items():
+        base_mr = 27 + rng.normal(0, 0.8)          # clima base da microrregião
+        amp_mr = 4 + rng.normal(0, 0.4)            # amplitude diurna regional
+        fase_mr = rng.uniform(0, 1)
+        for _ in range(estacoes_por_mr):
+            base_t = base_mr + rng.normal(0, 0.3)  # variação local da estação
+            amp = amp_mr + rng.normal(0, 0.15)
+            sazonal = 1.2 * np.sin(2 * np.pi * dia / 365 + fase_mr)
+            diurno = np.sin(2 * np.pi * (hora - 9) / 24)
 
-        # intensidade do evento ao longo do tempo (rampa de subida e descida)
-        k = np.zeros(H)
-        ev = None
-        if s in epicentro or s in vizinhas:
-            d0 = inicio_teste + dia_evento + (atraso_vizinhas if s in vizinhas else 0)
-            intens = 1.0 if s in epicentro else 0.6
-            h0, h1 = d0 * 24, (d0 + duracao) * 24
-            ramp = 7 * 24
-            k[h0:h1] = intens * np.minimum(1, (t[h0:h1] - h0) / ramp)
-            k[h1 - ramp:h1] = np.minimum(k[h1 - ramp:h1], intens * (h1 - t[h1 - ramp:h1]) / ramp)
-            ev = (h0, h1)
-        eventos[s] = ev
+            k = np.zeros(H)
+            ev = None
+            if papel in ("epicentro", "vizinha"):
+                d0 = inicio_teste + dia_evento + (atraso_vizinhas if papel == "vizinha" else 0)
+                d0 += int(rng.integers(-1, 2))     # estações da mesma MR não começam no mesmo dia
+                intens = (1.0 if papel == "epicentro" else 0.6) * rng.uniform(0.9, 1.1)
+                h0, h1 = d0 * 24, (d0 + duracao) * 24
+                ramp = 7 * 24
+                k[h0:h1] = intens * np.minimum(1, (t[h0:h1] - h0) / ramp)
+                k[h1 - ramp:h1] = np.minimum(k[h1 - ramp:h1], intens * (h1 - t[h1 - ramp:h1]) / ramp)
+                ev = (h0, h1)
 
-        # ruído autocorrelacionado (AR(1)); persistência maior durante o evento
-        ruido = np.zeros(H)
-        e = rng.normal(0, 0.6, H)
-        for i in range(1, H):
-            phi = 0.85 + 0.12 * k[i]
-            ruido[i] = phi * ruido[i - 1] + e[i]
+            ruido = np.zeros(H)
+            e = rng.normal(0, 0.6, H)
+            for i in range(1, H):
+                phi = 0.85 + 0.12 * k[i]
+                ruido[i] = phi * ruido[i - 1] + e[i]
 
-        temp = base_t + sazonal + amp * (1 + 0.8 * k) * diurno + 4.0 * k + ruido
-        umid = np.clip(80 - 2.2 * (temp - base_t) - 25 * k + rng.normal(0, 3, H), 15, 100)
-        press = 1010 + 1.5 * np.sin(2 * np.pi * (hora - 10) / 12) - 2.0 * k + rng.normal(0, 0.5, H)
-        estacoes[s] = pd.DataFrame({"temp": temp, "umid": umid, "pressao": press, "hora": hora})
-    return estacoes, eventos
+            temp = base_t + sazonal + amp * (1 + 0.8 * k) * diurno + 4.0 * k + ruido
+            umid = np.clip(80 - 2.2 * (temp - base_t) - 25 * k + rng.normal(0, 3, H), 15, 100)
+            press = 1010 + 1.5 * np.sin(2 * np.pi * (hora - 10) / 12) - 2.0 * k + rng.normal(0, 0.5, H)
+            estacoes[sid] = pd.DataFrame({"temp": temp, "umid": umid, "pressao": press, "hora": hora})
+            eventos[sid] = ev
+            mr_de[sid] = nome
+            sid += 1
+    return estacoes, eventos, mr_de, dict(microrregioes)
 
 
 # ---------------------------------------------------------------------------
