@@ -88,39 +88,3 @@ Saídas na pasta `resultados/`:
 | `rmse_fora_C` | erro nas microrregiões fora do evento (a proposta não pode piorá-las) |
 | `kB_lora_up` / `kB_backhaul` | tráfego no rádio LoRa e entre gateways e o servidor |
 
-## 4. Usar dados reais do INMET
-
-1. Baixe os arquivos anuais das estações automáticas do Pará em
-   https://portal.inmet.gov.br/dadoshistoricos (um ZIP por ano).
-2. Leia cada estação com `ler_inmet_csv()` em `curupira/data.py`, depois concatene os anos.
-   Confira os nomes das colunas com um arquivo real, porque eles mudam um pouco entre anos.
-3. Em `run_experiment.py → preparar()`, troque `gerar_microrregioes(...)` por:
-   `estacoes {id: DataFrame}`, `mr_de {id: microrregião}` (pela tabela de municípios do IBGE)
-   e `eventos {id: (início, fim)}`, com as janelas do evento (ex.: seca de set.–nov./2023)
-   definidas por um critério objetivo, como o percentil 95 de temperatura.
-4. Use **divisão temporal**: treino em 2015–2022, teste em 2023–2024. Nunca embaralhe dados do futuro no treino.
-
-## 5. Próximos passos para o artigo
-
-| Etapa | O que fazer |
-|---|---|
-| Detector | comparar Page-Hinkley com ADWIN e KSWIN (`pip install river`, função `detector_river`) |
-| Sensibilidade | variar `--alpha`, `--w_max`, `--bits` (32, 8, 4, 2), `--K`, `--mistura`, `--dias_alerta` e `--estacoes_por_mr` |
-| Microrregiões | usar as 22 microrregiões do Pará (ou as 21 regiões imediatas do IBGE 2017) e justificar a escolha no artigo |
-| Flower | portar `treino_local` para um `flwr.client.NumPyClient` e `agregar` para uma `Strategy` própria |
-| TinyML | refazer o modelo em PyTorch/TensorFlow, converter para TFLite int8 e medir no ESP32-S3 (M1) |
-| Rede | levar o tamanho das mensagens (`kB_upload`) para o NS-3 (módulo LoRaWAN) e medir PDR e energia (M5) |
-
-### Sugestão de figuras e tabelas do artigo
-
-1. Arquitetura (já está no projeto)
-2. RMSE diário no epicentro e nas vizinhas (`curva_rmse.png`)
-3. Mapa das microrregiões com o RMSE de cada uma (`por_microrregiao.csv`)
-4. Tabela de RMSE (epicentro, vizinhas, fora) × kB LoRa × kB backhaul, por estratégia
-5. Trade-off entre bits de quantização e RMSE (rodar com `--bits 32 8 4 2`)
-6. Atraso de detecção e falsos alarmes por detector
-
-## 6. Reprodutibilidade
-
-- Toda execução usa sementes fixas (`--seeds N` roda as sementes 0 a N−1).
-- Salve o `resultados.csv` de cada experimento no repositório. Ele é a evidência (E05) do REO.
